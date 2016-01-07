@@ -7,7 +7,7 @@ import extent from 'geojson-extent'
 import inside from 'turf-inside'
 import {pixelToLat, pixelToLon, lonToPixel, latToPixel} from './mercator'
 
-const HEADER_SIZE = 24 // bytes, must be multiple of 8 as we're using a float64array (no clue why)
+const HEADER_SIZE = 5 // ints
 
 /**
  * Take geojson point or polygon data and convert it to a grid. Return a map from keys to raw array buffers formatted as follows
@@ -16,16 +16,13 @@ const HEADER_SIZE = 24 // bytes, must be multiple of 8 as we're using a float64a
  * (4 byte int) north (y) offset
  * (4 byte int) width
  * (4 byte int) height
- * 4 bytes padding to make header a multiple of 8 bytes
- * repeated 8 byte _double_ values for each pixel, rows first, delta-coded
+ * repeated 4 byte int values for each pixel, rows first, delta-coded
  */
 export default function grid (data, zoom) {
   // for now assume that all numeric properties are to be included, and that all features have the same properties
   // geojson-extent has a fit if some features don't have properties
   data.features = data.features.filter(f => f.properties != null)
   let exemplar = data.features[0]
-
-  console.log(exemplar.properties)
 
   // figure out bounding box
   let bbox = extent(data)
@@ -39,8 +36,6 @@ export default function grid (data, zoom) {
 
   console.log(`n ${north} e ${east} s ${south} w ${west} width ${width} height ${height}`)
 
-  let bufSizeBytes = HEADER_SIZE + 8 * width * height
-
   let out = new Map()
 
   for (var key in exemplar.properties) {
@@ -49,16 +44,12 @@ export default function grid (data, zoom) {
     var val = exemplar.properties[key]
 
     if (isFinite(val)) {
-      let buf = new ArrayBuffer(bufSizeBytes)
-      // fill the first few value
-      let dv = new DataView(buf)
-      dv.setInt32(0, zoom, true)
-      dv.setInt32(4, west, true)
-      dv.setInt32(8, north, true)
-      dv.setInt32(12, width, true)
-      dv.setInt32(16, height, true)
-
-      let arr = new Float64Array(buf, HEADER_SIZE)
+      let arr = new Int32Array(HEADER_SIZE + width * height)
+      arr[0] = zoom
+      arr[1] = west
+      arr[2] = north
+      arr[3] = width
+      arr[4] = height
 
       out.set(key, arr)
     }
@@ -104,16 +95,25 @@ export default function grid (data, zoom) {
       return
     }
 
-    // todo pycnoplactic mapping
-    let weight = 1 / pixels.length
-
     out.forEach((array, key) => {
       // TODO once we have a weight-per-pixel this won't work
-      let val = feat.properties[key] * weight
-
+      // NB the grids are ints, so we round the value. This does not bias the results if the fractional
+      // part of the input data is symmetrically distributed about 0 and not correlated with any other variables of
+      // interest. This means that if a count has been distributed over many cells and each cell has a small fractional
+      // component 
+      let val = Math.round(feat.properties[key])
       if (isNaN(val)) return
 
-      pixels.forEach(p => array[p] += val)
+      // distribute the value in a way that preserves the total. First add the integer part to all
+      // integer divide, note |0
+      let integerPart = val / pixels.length | 0
+      pixels.forEach(p => array[p + HEADER_SIZE] += integerPart)
+
+      // randomly distribute the remainder
+      let remainder = val % pixels.length
+      for (let i = 0; i < remainder; i++) {
+        array[pixels[Math.floor(Math.random() * pixels.length)] + HEADER_SIZE]++
+      }
     })
   })
 
@@ -121,14 +121,13 @@ export default function grid (data, zoom) {
   let ret = new Map()
   out.forEach((array, key) => {
     // delta-code for efficient compression
-    for (let i = 0, prev = 0; i < array.length; i++) {
+    for (let i = HEADER_SIZE, prev = 0; i < array.length; i++) {
       let current = array[i]
       array[i] = current - prev
       prev = current
     }
 
-    // extract raw array buffer
-    ret.set(key, array.buffer)
+    ret.set(key, array)
   })
 
   return ret

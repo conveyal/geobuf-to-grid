@@ -6,14 +6,14 @@
  * Creates one .grid file for each numeric attribute in the geobuf. If --png is specified, creates log-scaled pngs as well (useful for debugging).
  */
 
-import grid from '../grid'
+import grid from './grid'
 import geobuf from 'geobuf'
 import Pbf from 'pbf'
 import fs from 'fs'
 import zlib from 'zlib'
 import Canvas from 'canvas'
 
-const ZOOM = 10
+const ZOOM = 9
 
 // http://stackoverflow.com/questions/5767325
 function remove (arr, val) {
@@ -48,8 +48,8 @@ if (png) console.log('writing pngs')
 
 let categories = {}
 
-grids.forEach((arrbuf, name) => {
-  let buff = new Buffer(arrbuf)
+grids.forEach((array, name) => {
+  let buff = new Buffer(array.buffer)
 
   // sanitize name
   let fn = name.replace(/[^a-zA-Z0-9\-_]/g, '_')
@@ -60,21 +60,21 @@ grids.forEach((arrbuf, name) => {
     fs.writeFile(args[1] + fn + '.grid', gzipped, () => {})
   })
 
-  if (png) writePng(arrbuf, args[1] + fn + '.png')
+  if (png) writePng(array, args[1] + fn + '.png')
 })
 
 fs.writeFile(args[1] + 'categories.json', JSON.stringify(categories), () => {})
 
-function writePng (arrbuf, file) {
-  let dv = new DataView(arrbuf)
-  let width = dv.getInt32(12, true)
-  let height = dv.getInt32(16, true)
+function writePng (rawArray, file) {
+  let width = rawArray[3]
+  let height = rawArray[4]
 
   let cvs = new Canvas(width, height)
   let ctx = cvs.getContext('2d')
   let data = ctx.createImageData(width, height)
 
-  let array = new Float64Array(arrbuf, 24)
+  // get rid of grid header
+  let array = rawArray.slice(5)
 
   // first figure out the maximum value
   let max = 1
