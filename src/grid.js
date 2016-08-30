@@ -22,6 +22,8 @@ export default function grid (data, zoom) {
   // for now assume that all numeric properties are to be included, and that all features have the same properties
   // geojson-extent has a fit if some features don't have properties
   data.features = data.features.filter(f => f.properties != null)
+
+
   let exemplar = data.features[0]
 
   // figure out bounding box
@@ -37,23 +39,6 @@ export default function grid (data, zoom) {
   console.log(`n ${north} e ${east} s ${south} w ${west} width ${width} height ${height}`)
 
   let out = new Map()
-
-  for (var key in exemplar.properties) {
-    if (!exemplar.properties.hasOwnProperty(key)) continue // shouldn't be an issue, as there should be no prototypes, but who knows?
-
-    var val = exemplar.properties[key]
-
-    if (isFinite(val)) {
-      let arr = new Int32Array(HEADER_SIZE + width * height)
-      arr[0] = zoom
-      arr[1] = west
-      arr[2] = north
-      arr[3] = width
-      arr[4] = height
-
-      out.set(key, arr)
-    }
-  }
 
   // loop over all features, accumulate to grid
   data.features.forEach(feat => {
@@ -95,7 +80,12 @@ export default function grid (data, zoom) {
       return
     }
 
-    out.forEach((array, key) => {
+    for (let key in feat.properties) {
+      if (!feat.properties.hasOwnProperty(key)) continue
+
+      if (!out.has(key)) out.set(key, getBlankGrid({ zoom, west, north, width, height }))
+      let array = out.get(key)
+
       // TODO once we have a weight-per-pixel this won't work
       // NB the grids are ints, so we round the value. This does not bias the results if the fractional
       // part of the input data is symmetrically distributed about 0 and not correlated with any other variables of
@@ -114,7 +104,7 @@ export default function grid (data, zoom) {
       for (let i = 0; i < remainder; i++) {
         array[pixels[Math.floor(Math.random() * pixels.length)] + HEADER_SIZE]++
       }
-    })
+    }
   })
 
   // delta-code values, extract raw array buffers
@@ -131,4 +121,15 @@ export default function grid (data, zoom) {
   })
 
   return ret
+}
+
+function getBlankGrid({zoom, west, north, width, height}) {
+    let arr = new Int32Array(HEADER_SIZE + width * height)
+    arr[0] = zoom
+    arr[1] = west
+    arr[2] = north
+    arr[3] = width
+    arr[4] = height
+
+    return arr
 }
